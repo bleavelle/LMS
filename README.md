@@ -1,5 +1,5 @@
-### NOTICE: THEY ARE TRYING TO STEAL YOUR COMPUTER
-## INSTALL LINUX NOW
+# NOTICE: THEY ARE TRYING TO STEAL YOUR COMPUTER
+### INSTALL LINUX NOW
 
 Never in my life as a wannabe hacker / computer guy / audio engineer / photographer / editor / robot builder have I ever seen anything like this. Right now, the people that used to sell us computers have decided they would rather keep all the computers to themselves. They want to stop you from owning your data, as we have known for years, but now they are coming for your autonomy, your mother fucking compute. Normal broke-ass kids like me couldn't afford a stick of ram anymore, or crack a plugin, or even own one in many cases. Subscription based, constantly hounded for your iLok, an internet connection, a demand to know who the fuck you are and if you are AUTHORIZED to use this software. Our computers waste countless cycles proving to the bank that we have indeed paid our Slate or Adobe subscriptions and can finish our project today. And now they want to put all the compute in the cloud so they can charge you for every turn of the knob, every SQL query, and access to photos of your loved ones. 
 
