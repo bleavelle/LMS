@@ -1,6 +1,6 @@
-desc:Galaxy Tape Echo
+desc:LMS Tape Echo
 //tags: delay echo tape analog
-//author: Bryan + Claude
+//author: LMS + Claude
 
 slider1:0<0,6,1{Head 1,Head 2,Head 3,Heads 1+2,Heads 1+3,Heads 2+3,All Heads}>Mode
 slider2:300<50,1000,1>Repeat Rate (ms)
@@ -127,7 +127,7 @@ slider10:50<0,100,1>Dry/Wet (%)
   // Base delay in samples (Head 1)
   delay_base = delay_ms / 1000 * srate;
 
-  // Head positions (RE-201 spacing ratios)
+  // Head positions (classic spacing ratios)
   head1_delay = delay_base;
   head2_delay = delay_base * 1.5;
   head3_delay = delay_base * 2.0;
@@ -227,7 +227,7 @@ slider10:50<0,100,1>Dry/Wet (%)
   wet_l *= echo_vol;
   wet_r *= echo_vol;
 
-  // --- Spring Reverb (post echo, like the RE-201) ---
+  // --- Spring Reverb (post echo, post echo) ---
   spring_mix > 0 ? (
     // Feed the echo output into the spring
     sp_in = (wet_l + wet_r) * 0.5;
@@ -277,7 +277,7 @@ slider10:50<0,100,1>Dry/Wet (%)
   wpos >= buf_max ? wpos = 0;
 
 @gfx 500 220
-  // Background - dark green/silver (RE-201 vibe)
+  // Background - dark green/silver (vintage tape vibe)
   gfx_r = 0.06; gfx_g = 0.09; gfx_b = 0.06;
   gfx_rect(0, 0, gfx_w, gfx_h);
 

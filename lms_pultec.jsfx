@@ -1,8 +1,8 @@
-desc:Bryan's Pultec EQP-1A
+desc:LMS Passive EQ
 //tags: equalizer pultec analog tube
-//author: Bryan + Claude
+//author: LMS + Claude
 
-// Classic Pultec EQP-1A emulation
+// Classic Passive EQ emulation
 // - Low boost + cut interact (slightly offset frequencies = the magic dip-and-bump)
 // - High boost with bandwidth control
 // - High cut (gentle rolloff)
@@ -72,13 +72,13 @@ hc_b0 = 1; hc_b1 = 0; hc_b2 = 0; hc_a1 = 0; hc_a2 = 0;
   out_gain = 10 ^ (slider9 / 20);
 
   // === LOW BOOST (low shelf, broad Q) ===
-  // Pultec boost is broad and gentle
+  // passive EQ boost is broad and gentle
   low_boost_amt > 0 ? (
     gain_db = low_boost_amt * 1.8;  // up to ~18dB
     A = 10 ^ (gain_db / 40);
     w0 = 2 * $pi * low_freq / srate;
     cs = cos(w0); sn = sin(w0);
-    // Broad Q for boost (Pultec-like)
+    // Broad Q for boost (passive-style)
     alpha = sn / (2 * 0.4);
     a0_inv = 1 / ((A + 1) + (A - 1) * cs + 2 * sqrt(A) * alpha);
     lb_b0 = A * ((A + 1) - (A - 1) * cs + 2 * sqrt(A) * alpha) * a0_inv;
@@ -92,7 +92,7 @@ hc_b0 = 1; hc_b1 = 0; hc_b2 = 0; hc_a1 = 0; hc_a2 = 0;
 
   // === LOW CUT (low shelf cut, slightly higher freq + narrower Q) ===
   // The magic: cut frequency is offset ~1.5x higher than boost
-  // This creates the classic Pultec "dip then bump" curve
+  // This creates the classic passive EQ "dip then bump" curve
   low_cut_amt > 0 ? (
     gain_db = -low_cut_amt * 1.8;
     A = 10 ^ (gain_db / 40);
@@ -205,14 +205,14 @@ hc_b0 = 1; hc_b1 = 0; hc_b2 = 0; hc_a1 = 0; hc_a2 = 0;
   spl1 = r * out_gain;
 
 @gfx 500 220
-  // Background - warm cream like a real Pultec
+  // Background - warm cream like a real passive EQ
   gfx_r = 0.12; gfx_g = 0.10; gfx_b = 0.06;
   gfx_rect(0, 0, gfx_w, gfx_h);
 
   // Title
   gfx_r = 0.9; gfx_g = 0.8; gfx_b = 0.5;
   gfx_x = 10; gfx_y = 8;
-  gfx_drawstr("BRYAN'S PULTEC EQP-1A");
+  gfx_drawstr("LMS PASSIVE EQ");
 
   // Low section
   gfx_r = 0.5; gfx_g = 0.5; gfx_b = 0.5;

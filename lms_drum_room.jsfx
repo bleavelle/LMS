@@ -1,6 +1,6 @@
-desc:Bryan's Sound City Drum Room
+desc:LMS Sound City Drum Room
 //tags: reverb room drums compressor
-//author: Bryan + Claude
+//author: LMS + Claude
 
 slider1:50<0,100,0.1>Room Size (%)
 slider2:50<0,100,0.1>Decay (%)

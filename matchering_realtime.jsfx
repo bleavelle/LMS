@@ -1,67 +1,28 @@
-#!/usr/bin/env python3
-"""
-JSFX Generator - creates a real-time Reaper plugin from matchering analysis params.
-Reads the JSON output from matchering_analyzer.py and generates a .jsfx file
-that does FFT convolution with the exact FIR filters matchering computed,
-plus post-tweak controls.
-
-FIR coefficients are stored in an external data file to avoid JSFX code size limits.
-"""
-
-import sys
-import os
-import json
-
-
-def generate_jsfx(params, output_path):
-    mid_fir = params["mid_fir"]
-    side_fir = params["side_fir"]
-    fir_len = params["fir_length"]
-    rms_gain = params["rms_gain_db"]
-
-    # FFT size must be >= chunk_size + fir_length - 1
-    fft_size = 8192
-    chunk_size = 4096
-
-    # Write FIR coefficients to a data file next to the JSFX
-    # Format: one value per line, mid coefficients first, then side
-    data_dir = os.path.dirname(output_path)
-    data_filename = "matchering_fir_data.txt"
-    data_path = os.path.join(data_dir, data_filename)
-
-    with open(data_path, "w") as f:
-        for v in mid_fir:
-            f.write(f"{v:.15e}\n")
-        for v in side_fir:
-            f.write(f"{v:.15e}\n")
-
-    print(f"FIR data written to: {data_path}")
-
-    jsfx = f"""desc:Matchering Realtime Master (FIR Convolution)
+desc:Matchering Realtime Master (FIR Convolution)
 //tags: mastering EQ limiter matchering convolution
-//author: Bryan + Claude
+//author: LMS + Claude
 
-filename:0,{data_filename}
+filename:0,matchering_fir_data.txt
 
-slider1:{rms_gain:.2f}<-20,20,0.1>Input Gain (dB)
+slider1:-2.70<-20,20,0.1>Input Gain (dB)
 slider2:100<0,100,1>Dry/Wet (%)
-slider3:1<0,1,1{{Off,On}}>Limiter
+slider3:1<0,1,1{Off,On}>Limiter
 slider4:-0.01<-6,0,0.01>Limiter Threshold (dB)
 slider5:0<-6,6,0.1>Low Tweak (dB)
 slider6:0<-6,6,0.1>Mid Tweak (dB)
 slider7:0<-6,6,0.1>High Tweak (dB)
 slider8:500<100,2000,1>Mid Freq (Hz)
-slider9:0<0,1,1{{Off,On}}>42069 Compressor
+slider9:0<0,1,1{Off,On}>42069 Compressor
 slider10:-12<-40,0,0.5>42069 Threshold (dB)
-slider11:4<0,3,1{{4:1,8:1,12:1,20:1}}>42069 Ratio
+slider11:4<0,3,1{4:1,8:1,12:1,20:1}>42069 Ratio
 slider12:0.2<0.02,0.8,0.01>42069 Attack (ms)
 slider13:250<50,1100,10>42069 Release (ms)
 slider14:100<0,100,1>42069 Mix (%)
 
 @init
-  fir_len = {fir_len};
-  fft_size = {fft_size};
-  chunk_size = {chunk_size};
+  fir_len = 4096;
+  fft_size = 8192;
+  chunk_size = 4096;
 
   // Memory pointers - all FFT buffers within first 65536 block
   mid_fir_fft = 0;           // 0..8191
@@ -84,7 +45,7 @@ slider14:100<0,100,1>42069 Mix (%)
   cur_input_r = input_buf_r0;
 
   // Initialize slider-derived values (in case @slider hasn't run yet)
-  master_gain = 10 ^ ({rms_gain:.2f} / 20);
+  master_gain = 10 ^ (-2.70 / 20);
   dry_wet = 1.0;
   limiter_on = 1;
   limiter_thresh = 10 ^ (-0.01 / 20);
@@ -418,7 +379,7 @@ slider14:100<0,100,1>42069 Mix (%)
   // Subtitle
   gfx_r = 0.4; gfx_g = 0.4; gfx_b = 0.5;
   gfx_x = 10; gfx_y = 24;
-  gfx_drawstr("FIR Convolution - {fir_len} taps");
+  gfx_drawstr("FIR Convolution - 4096 taps");
 
   // Status
   gfx_x = 10; gfx_y = 44;
@@ -468,26 +429,3 @@ slider14:100<0,100,1>42069 Mix (%)
     gfx_r = 0.3; gfx_g = 0.3; gfx_b = 0.4;
     gfx_drawstr("42069: Off");
   );
-"""
-
-    with open(output_path, "w") as f:
-        f.write(jsfx)
-
-    print(f"JSFX written to: {output_path}")
-    print(f"FIR length: {fir_len} taps, FFT size: {fft_size}")
-    print(f"Latency: {chunk_size} samples ({chunk_size/44100*1000:.1f}ms at 44.1kHz)")
-
-
-def main():
-    if len(sys.argv) < 3:
-        print("Usage: jsfx_generator.py <params.json> <output.jsfx>", file=sys.stderr)
-        sys.exit(1)
-
-    with open(sys.argv[1]) as f:
-        params = json.load(f)
-
-    generate_jsfx(params, sys.argv[2])
-
-
-if __name__ == "__main__":
-    main()

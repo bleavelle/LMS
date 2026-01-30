@@ -1,6 +1,6 @@
-desc:Bryan's Tape Machine
+desc:LMS Tape Machine
 //tags: delay echo tape saturation distortion analog
-//author: Bryan + Claude
+//author: LMS + Claude
 
 // --- SATURATION SECTION ---
 slider1:0<0,1,1{Off,On}>Sat Enable
@@ -454,7 +454,7 @@ slider20:50<0,100,1>Dry/Wet (%)
   spl1 = out_r;
 
 @gfx 550 280
-  // Background - dark green/silver (RE-201 vibe)
+  // Background - dark green/silver (vintage tape vibe)
   gfx_r = 0.06; gfx_g = 0.09; gfx_b = 0.06;
   gfx_rect(0, 0, gfx_w, gfx_h);
 
@@ -465,7 +465,7 @@ slider20:50<0,100,1>Dry/Wet (%)
   // Title
   gfx_r = 0.85; gfx_g = 0.9; gfx_b = 0.75;
   gfx_x = 12; gfx_y = 6;
-  gfx_drawstr("BRYAN'S TAPE MACHINE");
+  gfx_drawstr("LMS TAPE MACHINE");
 
   // --- Saturation indicator ---
   sat_on ? (

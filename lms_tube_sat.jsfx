@@ -1,6 +1,6 @@
-desc:Bryan's Tube Saturator
+desc:LMS Tube Saturator
 //tags: saturation distortion tube analog
-//author: Bryan + Claude
+//author: LMS + Claude
 
 slider1:0<0,100,0.1>Drive (%)
 slider2:0<-12,12,0.1>Output Gain (dB)
@@ -183,7 +183,7 @@ slider8:0<0,100,0.1>Bias (%)
   // Title
   gfx_r = 0.9; gfx_g = 0.7; gfx_b = 0.3;
   gfx_x = 10; gfx_y = 8;
-  gfx_drawstr("BRYAN'S TUBE SATURATOR");
+  gfx_drawstr("LMS TUBE SATURATOR");
 
   // Mode name
   gfx_r = 0.8; gfx_g = 0.5; gfx_b = 0.2;

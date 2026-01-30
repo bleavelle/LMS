@@ -1,6 +1,6 @@
-desc:Bryan's Distressor (EL8 Style)
+desc:LMS Distressor (Analog Style)
 //tags: compressor distortion analog distressor
-//author: Bryan + Claude
+//author: LMS + Claude
 
 slider1:0<-12,24,0.1>Input (dB)
 slider2:-12<-40,0,0.5>Threshold (dB)
@@ -164,7 +164,7 @@ slider10:100<0,100,1>Mix (%)
   // Title
   gfx_r = 0.9; gfx_g = 0.6; gfx_b = 0.3;
   gfx_x = 10; gfx_y = 8;
-  gfx_drawstr("BRYAN'S DISTRESSOR");
+  gfx_drawstr("LMS DISTRESSOR");
 
   // Ratio display
   gfx_r = 0.5; gfx_g = 0.5; gfx_b = 0.5;
