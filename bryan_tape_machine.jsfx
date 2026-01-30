@@ -1,0 +1,665 @@
+desc:Bryan's Tape Machine
+//tags: delay echo tape saturation distortion analog
+//author: Bryan + Claude
+
+// --- SATURATION SECTION ---
+slider1:0<0,1,1{Off,On}>Sat Enable
+slider2:0<0,100,0.1>Drive (%)
+slider3:0<0,4,1{Warm Tube,Hot Tube,Tape,Rectifier,Fuzz}>Sat Mode
+slider4:0<0,100,0.1>Even Harmonics (%)
+slider5:50<0,100,0.1>Odd Harmonics (%)
+slider6:0<0,100,0.1>Bias (%)
+slider7:0<0,3,1{Pre Delay,Dry Only,Wet Only,Final Stage}>Sat Routing
+
+// --- DELAY SECTION ---
+slider8:1<0,1,1{Off,On}>Delay Enable
+slider9:0<0,6,1{Head 1,Head 2,Head 3,Heads 1+2,Heads 1+3,Heads 2+3,All Heads}>Head Mode
+slider10:300<50,1000,1>Repeat Rate (ms)
+slider11:40<0,100,0.1>Intensity (%)
+slider12:80<0,100,0.1>Echo Volume (%)
+slider13:30<0,100,1>Wow & Flutter (%)
+slider14:30<0,100,1>Tape Age (%)
+
+// --- TONE & MIX ---
+slider15:50<0,100,1>Bass (%)
+slider16:50<0,100,1>Treble (%)
+slider17:20000<20,20000,1>Tone (Hz)
+slider18:0<0,100,1>Spring Reverb (%)
+slider19:0<-12,12,0.1>Output Gain (dB)
+slider20:50<0,100,1>Dry/Wet (%)
+
+@init
+  // === Delay buffer - max 2 seconds ===
+  buf_max = floor(srate * 2);
+  buf_l = 0;
+  buf_r = buf_max;
+  wpos = 0;
+
+  memset(buf_l, 0, buf_max);
+  memset(buf_r, 0, buf_max);
+
+  // Feedback lowpass state
+  fb_lp_l = 0; fb_lp_r = 0;
+
+  // Feedback signal
+  fb_l = 0; fb_r = 0;
+
+  // Wow/flutter LFO phases
+  wow_phase = 0;
+  flutter_phase = 0;
+
+  // Tape reel animation
+  reel_angle = 0;
+
+  // === Spring reverb buffers (6 allpass + 2 comb delays) ===
+  sp_base = buf_max * 2 + 100;
+  sp_ap1_len = 113;  sp_ap1_buf = sp_base;              sp_ap1_pos = 0;
+  sp_ap2_len = 337;  sp_ap2_buf = sp_ap1_buf + sp_ap1_len; sp_ap2_pos = 0;
+  sp_ap3_len = 547;  sp_ap3_buf = sp_ap2_buf + sp_ap2_len; sp_ap3_pos = 0;
+  sp_ap4_len = 751;  sp_ap4_buf = sp_ap3_buf + sp_ap3_len; sp_ap4_pos = 0;
+  sp_ap5_len = 1153; sp_ap5_buf = sp_ap4_buf + sp_ap4_len; sp_ap5_pos = 0;
+  sp_ap6_len = 1597; sp_ap6_buf = sp_ap5_buf + sp_ap5_len; sp_ap6_pos = 0;
+  sp_cm1_len = floor(srate * 0.035);
+  sp_cm2_len = floor(srate * 0.043);
+  sp_cm1_buf = sp_ap6_buf + sp_ap6_len; sp_cm1_pos = 0;
+  sp_cm2_buf = sp_cm1_buf + sp_cm1_len; sp_cm2_pos = 0;
+  memset(sp_base, 0, sp_cm2_buf + sp_cm2_len - sp_base);
+  sp_lp_l = 0; sp_lp_r = 0;
+  sp_damp_coeff = exp(-2 * $pi * 4000 / srate);
+
+  // === DC blocker state (for saturation) ===
+  dc_xl = 0; dc_xr = 0;
+  dc_yl = 0; dc_yr = 0;
+  dc_r = 1 - (220 / srate);
+
+  // === Tone filter state (saturation tone control) ===
+  tone_yl = 0; tone_yr = 0;
+
+  // === tanh approximation ===
+  function tanh(x) local(e2x) (
+    x > 10 ? 1 : x < -10 ? -1 : (
+      e2x = exp(2 * x);
+      (e2x - 1) / (e2x + 1);
+    );
+  );
+
+  // === Cubic interpolation read from delay buffer ===
+  function buf_read_cubic(buf, pos, bmax)
+    local(p0, p1, p2, p3, x0, x1, x2, x3, a, b, c, d, frac, idx)
+  (
+    idx = floor(pos);
+    frac = pos - idx;
+
+    p0 = idx - 1; p0 < 0 ? p0 += bmax;
+    p1 = idx;     p1 >= bmax ? p1 -= bmax;
+    p2 = idx + 1; p2 >= bmax ? p2 -= bmax;
+    p3 = idx + 2; p3 >= bmax ? p3 -= bmax;
+
+    x0 = buf[p0]; x1 = buf[p1]; x2 = buf[p2]; x3 = buf[p3];
+
+    a = -0.5*x0 + 1.5*x1 - 1.5*x2 + 0.5*x3;
+    b = x0 - 2.5*x1 + 2*x2 - 0.5*x3;
+    c = -0.5*x0 + 0.5*x2;
+    d = x1;
+
+    ((a * frac + b) * frac + c) * frac + d;
+  );
+
+  // === Spring allpass filter ===
+  function spring_ap(buf, pos, len, input, coeff)
+    local(delayed, output)
+  (
+    delayed = buf[pos];
+    output = -input * coeff + delayed;
+    buf[pos] = input + delayed * coeff;
+    output;
+  );
+
+  // === Tape saturation (feedback loop character) ===
+  function tape_char(x, age)
+    local(drive, b)
+  (
+    drive = 1 + age * 3;
+    b = x * drive;
+    b > 0 ? (
+      b = this.tanh(b);
+    ) : (
+      b = this.tanh(b * 0.85) * 1.18;
+    );
+    b / drive * (1 + age * 0.5);
+  );
+
+  // === Saturation functions (from tube sat) ===
+  function warm_tube(x, drive, bias)
+    local(b)
+  (
+    b = x + bias * 0.1;
+    b = b * (1 + drive);
+    b > 0 ? (
+      b = this.tanh(b);
+    ) : (
+      b = this.tanh(b * 0.8) * 1.25;
+    );
+    b;
+  );
+
+  function hot_tube(x, drive, bias)
+    local(b)
+  (
+    b = x + bias * 0.15;
+    b = b * (1 + drive * 2);
+    b > 0 ? (
+      b = 1 - exp(-abs(b));
+    ) : (
+      b = -(1 - exp(-abs(b * 0.7))) * 1.1;
+    );
+    b;
+  );
+
+  function tape_sat(x, drive, bias)
+    local(b)
+  (
+    b = x + bias * 0.05;
+    b = b * (1 + drive * 1.5);
+    b = (2 / $pi) * atan(b * $pi * 0.5);
+    b;
+  );
+
+  function rectifier(x, drive, bias)
+    local(b)
+  (
+    b = x + bias * 0.2;
+    b = b * (1 + drive * 3);
+    b < 0 ? b = b * (0.2 + drive * 0.1);
+    b = this.tanh(b);
+    b;
+  );
+
+  function fuzz(x, drive, bias)
+    local(b)
+  (
+    b = x + bias * 0.1;
+    b = b * (1 + drive * 4);
+    abs(b) < 0.1 * (1 - drive * 0.5) ? (
+      b = b * (0.3 + drive * 0.7);
+    ) : (
+      b = sign(b) * (1 - exp(-abs(b)));
+    );
+    b;
+  );
+
+  function apply_harmonics(x, even_mix, odd_mix)
+    local(x2, x3, result)
+  (
+    x2 = x * x * sign(x);
+    x3 = x * x * x;
+    result = x + even_mix * x2 * 0.3 + odd_mix * x3 * 0.2;
+    result;
+  );
+
+  // === Apply saturation to a stereo pair ===
+  function apply_sat(l, r) (
+    sat_mode == 0 ? (
+      sat_out_l = warm_tube(l, sat_drive, sat_bias);
+      sat_out_r = warm_tube(r, sat_drive, sat_bias);
+    ) : sat_mode == 1 ? (
+      sat_out_l = hot_tube(l, sat_drive, sat_bias);
+      sat_out_r = hot_tube(r, sat_drive, sat_bias);
+    ) : sat_mode == 2 ? (
+      sat_out_l = tape_sat(l, sat_drive, sat_bias);
+      sat_out_r = tape_sat(r, sat_drive, sat_bias);
+    ) : sat_mode == 3 ? (
+      sat_out_l = rectifier(l, sat_drive, sat_bias);
+      sat_out_r = rectifier(r, sat_drive, sat_bias);
+    ) : (
+      sat_out_l = fuzz(l, sat_drive, sat_bias);
+      sat_out_r = fuzz(r, sat_drive, sat_bias);
+    );
+
+    // Harmonics
+    (sat_even > 0 || sat_odd > 0) ? (
+      sat_out_l = apply_harmonics(sat_out_l, sat_even, sat_odd);
+      sat_out_r = apply_harmonics(sat_out_r, sat_even, sat_odd);
+    );
+
+    // Tone control (lowpass)
+    sat_tone_freq < 19999 ? (
+      tone_yl = tone_yl * sat_tone_coeff + sat_out_l * (1 - sat_tone_coeff);
+      tone_yr = tone_yr * sat_tone_coeff + sat_out_r * (1 - sat_tone_coeff);
+      sat_out_l = tone_yl;
+      sat_out_r = tone_yr;
+    );
+  );
+
+@slider
+  // Saturation params
+  sat_on = slider1;
+  sat_drive = slider2 / 100;
+  sat_mode = slider3;
+  sat_even = slider4 / 100;
+  sat_odd = slider5 / 100;
+  sat_bias = slider6 / 100;
+  sat_routing = slider7;
+
+  // Delay params
+  delay_on = slider8;
+  head_mode = slider9;
+  delay_ms = slider10;
+  intensity = slider11 / 100;
+  echo_vol = slider12 / 100;
+  wf_amount = slider13 / 100;
+  tape_age = slider14 / 100;
+
+  // Tone & mix
+  bass = slider15 / 100;
+  treble = slider16 / 100;
+  sat_tone_freq = slider17;
+  sat_tone_coeff = exp(-2 * $pi * sat_tone_freq / srate);
+  spring_mix = slider18 / 100;
+  out_gain = 10 ^ (slider19 / 20);
+  dry_wet = slider20 / 100;
+
+  // Delay setup
+  delay_base = delay_ms / 1000 * srate;
+  head1_delay = delay_base;
+  head2_delay = delay_base * 1.5;
+  head3_delay = delay_base * 2.0;
+
+  h1_on = (head_mode == 0 || head_mode == 3 || head_mode == 4 || head_mode == 6) ? 1 : 0;
+  h2_on = (head_mode == 1 || head_mode == 3 || head_mode == 5 || head_mode == 6) ? 1 : 0;
+  h3_on = (head_mode == 2 || head_mode == 4 || head_mode == 5 || head_mode == 6) ? 1 : 0;
+  num_heads = h1_on + h2_on + h3_on;
+  num_heads < 1 ? num_heads = 1;
+
+  // Feedback lowpass
+  fb_lp_freq = 800 + treble * 8000 - tape_age * 3000;
+  fb_lp_freq = max(fb_lp_freq, 400);
+  fb_lp_freq = min(fb_lp_freq, 12000);
+  fb_lp_coeff = exp(-2 * $pi * fb_lp_freq / srate);
+
+  // Bass highpass
+  bass_hp_freq = 60 + (1 - bass) * 400;
+  bass_hp_coeff = exp(-2 * $pi * bass_hp_freq / srate);
+
+@sample
+  dry_l = spl0;
+  dry_r = spl1;
+
+  proc_l = spl0;
+  proc_r = spl1;
+
+  // === PRE-DELAY SATURATION ===
+  (sat_on && sat_routing == 0) ? (
+    apply_sat(proc_l, proc_r);
+    proc_l = sat_out_l;
+    proc_r = sat_out_r;
+  );
+
+  // === DRY ONLY SATURATION (saturate dry path, delay gets clean input) ===
+  (sat_on && sat_routing == 1) ? (
+    apply_sat(dry_l, dry_r);
+    dry_l = sat_out_l;
+    dry_r = sat_out_r;
+  );
+
+  // === DELAY SECTION ===
+  delay_on ? (
+    // Wow & Flutter modulation
+    wow_phase += 0.5 / srate;
+    wow_phase >= 1 ? wow_phase -= 1;
+    flutter_phase += 6.3 / srate;
+    flutter_phase >= 1 ? flutter_phase -= 1;
+
+    wow_val = wow_phase < 0.5 ? (wow_phase * 4 - 1) : (3 - wow_phase * 4);
+    flutter_val = sin(2 * $pi * flutter_phase);
+
+    wow_mod = wow_val * wf_amount * 3.0 * srate / 1000;
+    flutter_mod = flutter_val * wf_amount * 0.5 * srate / 1000;
+    total_mod = wow_mod + flutter_mod;
+
+    // Write to delay buffer (input + feedback with tape character)
+    tape_in_l = proc_l + fb_l * intensity;
+    tape_in_r = proc_r + fb_r * intensity;
+
+    tape_age > 0.01 ? (
+      tape_in_l = tape_char(tape_in_l, tape_age);
+      tape_in_r = tape_char(tape_in_r, tape_age);
+    );
+
+    buf_l[wpos] = tape_in_l;
+    buf_r[wpos] = tape_in_r;
+
+    // Read from heads
+    wet_l = 0; wet_r = 0;
+
+    h1_on ? (
+      rd = wpos - head1_delay - total_mod;
+      rd < 0 ? rd += buf_max;
+      rd >= buf_max ? rd -= buf_max;
+      wet_l += buf_read_cubic(buf_l, rd, buf_max);
+      wet_r += buf_read_cubic(buf_r, rd, buf_max);
+    );
+
+    h2_on ? (
+      rd = wpos - head2_delay - total_mod;
+      rd < 0 ? rd += buf_max;
+      rd >= buf_max ? rd -= buf_max;
+      wet_l += buf_read_cubic(buf_l, rd, buf_max);
+      wet_r += buf_read_cubic(buf_r, rd, buf_max);
+    );
+
+    h3_on ? (
+      rd = wpos - head3_delay - total_mod;
+      rd < 0 ? rd += buf_max;
+      rd >= buf_max ? rd -= buf_max;
+      wet_l += buf_read_cubic(buf_l, rd, buf_max);
+      wet_r += buf_read_cubic(buf_r, rd, buf_max);
+    );
+
+    wet_l /= num_heads;
+    wet_r /= num_heads;
+
+    // Feedback path: lowpass
+    fb_lp_l = fb_lp_l * fb_lp_coeff + wet_l * (1 - fb_lp_coeff);
+    fb_lp_r = fb_lp_r * fb_lp_coeff + wet_r * (1 - fb_lp_coeff);
+    fb_l = fb_lp_l;
+    fb_r = fb_lp_r;
+
+    // Bass cut on wet
+    bass < 0.99 ? (
+      wet_l = wet_l - (wet_l * bass_hp_coeff + fb_lp_l * (1 - bass_hp_coeff)) * (1 - bass);
+      wet_r = wet_r - (wet_r * bass_hp_coeff + fb_lp_r * (1 - bass_hp_coeff)) * (1 - bass);
+    );
+
+    // Echo volume
+    wet_l *= echo_vol;
+    wet_r *= echo_vol;
+
+    // Spring Reverb (post echo)
+    spring_mix > 0 ? (
+      sp_in = (wet_l + wet_r) * 0.5;
+
+      sp_in = spring_ap(sp_ap1_buf, sp_ap1_pos, sp_ap1_len, sp_in, 0.6);
+      sp_ap1_pos += 1; sp_ap1_pos >= sp_ap1_len ? sp_ap1_pos = 0;
+      sp_in = spring_ap(sp_ap2_buf, sp_ap2_pos, sp_ap2_len, sp_in, 0.6);
+      sp_ap2_pos += 1; sp_ap2_pos >= sp_ap2_len ? sp_ap2_pos = 0;
+      sp_in = spring_ap(sp_ap3_buf, sp_ap3_pos, sp_ap3_len, sp_in, 0.55);
+      sp_ap3_pos += 1; sp_ap3_pos >= sp_ap3_len ? sp_ap3_pos = 0;
+      sp_in = spring_ap(sp_ap4_buf, sp_ap4_pos, sp_ap4_len, sp_in, 0.55);
+      sp_ap4_pos += 1; sp_ap4_pos >= sp_ap4_len ? sp_ap4_pos = 0;
+      sp_in = spring_ap(sp_ap5_buf, sp_ap5_pos, sp_ap5_len, sp_in, 0.5);
+      sp_ap5_pos += 1; sp_ap5_pos >= sp_ap5_len ? sp_ap5_pos = 0;
+      sp_in = spring_ap(sp_ap6_buf, sp_ap6_pos, sp_ap6_len, sp_in, 0.5);
+      sp_ap6_pos += 1; sp_ap6_pos >= sp_ap6_len ? sp_ap6_pos = 0;
+
+      cm1_out = sp_cm1_buf[sp_cm1_pos];
+      cm2_out = sp_cm2_buf[sp_cm2_pos];
+
+      sp_lp_l = sp_lp_l * sp_damp_coeff + cm1_out * (1 - sp_damp_coeff);
+      sp_lp_r = sp_lp_r * sp_damp_coeff + cm2_out * (1 - sp_damp_coeff);
+
+      sp_cm1_buf[sp_cm1_pos] = sp_in + sp_lp_l * 0.45;
+      sp_cm2_buf[sp_cm2_pos] = sp_in + sp_lp_r * 0.40;
+      sp_cm1_pos += 1; sp_cm1_pos >= sp_cm1_len ? sp_cm1_pos = 0;
+      sp_cm2_pos += 1; sp_cm2_pos >= sp_cm2_len ? sp_cm2_pos = 0;
+
+      sp_out_l = cm1_out * 0.6 + cm2_out * 0.4;
+      sp_out_r = cm1_out * 0.4 + cm2_out * 0.6;
+
+      wet_l += sp_out_l * spring_mix;
+      wet_r += sp_out_r * spring_mix;
+    );
+
+    // Advance write position
+    wpos += 1;
+    wpos >= buf_max ? wpos = 0;
+  ) : (
+    // Delay off: no wet signal from delay
+    wet_l = 0;
+    wet_r = 0;
+  );
+
+  // === WET ONLY SATURATION ===
+  (sat_on && sat_routing == 2) ? (
+    apply_sat(wet_l, wet_r);
+    wet_l = sat_out_l;
+    wet_r = sat_out_r;
+  );
+
+  // === Dry/Wet mix ===
+  out_l = dry_l * (1 - dry_wet) + wet_l * dry_wet;
+  out_r = dry_r * (1 - dry_wet) + wet_r * dry_wet;
+
+  // === FINAL STAGE SATURATION (blended signal) ===
+  (sat_on && sat_routing == 3) ? (
+    apply_sat(out_l, out_r);
+    out_l = sat_out_l;
+    out_r = sat_out_r;
+  );
+
+  // === Output gain ===
+  out_l *= out_gain;
+  out_r *= out_gain;
+
+  // === DC blocker ===
+  dc_yl = out_l - dc_xl + dc_r * dc_yl;
+  dc_xl = out_l;
+  out_l = dc_yl;
+
+  dc_yr = out_r - dc_xr + dc_r * dc_yr;
+  dc_xr = out_r;
+  out_r = dc_yr;
+
+  spl0 = out_l;
+  spl1 = out_r;
+
+@gfx 550 280
+  // Background - dark green/silver (RE-201 vibe)
+  gfx_r = 0.06; gfx_g = 0.09; gfx_b = 0.06;
+  gfx_rect(0, 0, gfx_w, gfx_h);
+
+  // Top panel stripe
+  gfx_r = 0.15; gfx_g = 0.2; gfx_b = 0.12;
+  gfx_rect(0, 0, gfx_w, 45);
+
+  // Title
+  gfx_r = 0.85; gfx_g = 0.9; gfx_b = 0.75;
+  gfx_x = 12; gfx_y = 6;
+  gfx_drawstr("BRYAN'S TAPE MACHINE");
+
+  // --- Saturation indicator ---
+  sat_on ? (
+    gfx_r = 0.9; gfx_g = 0.6; gfx_b = 0.15;
+    gfx_x = 12; gfx_y = 24;
+    sat_mode == 0 ? gfx_drawstr("SAT: Warm Tube");
+    sat_mode == 1 ? gfx_drawstr("SAT: Hot Tube");
+    sat_mode == 2 ? gfx_drawstr("SAT: Tape");
+    sat_mode == 3 ? gfx_drawstr("SAT: Rectifier");
+    sat_mode == 4 ? gfx_drawstr("SAT: Fuzz");
+    gfx_drawstr("  ");
+    sat_routing == 0 ? gfx_drawstr("[PRE DELAY]");
+    sat_routing == 1 ? gfx_drawstr("[DRY ONLY]");
+    sat_routing == 2 ? gfx_drawstr("[WET ONLY]");
+    sat_routing == 3 ? gfx_drawstr("[FINAL]");
+  ) : (
+    gfx_r = 0.3; gfx_g = 0.3; gfx_b = 0.2;
+    gfx_x = 12; gfx_y = 24;
+    gfx_drawstr("SAT: Off");
+  );
+
+  // --- Delay section info ---
+  delay_on ? (
+    gfx_r = 0.5; gfx_g = 0.7; gfx_b = 0.4;
+    gfx_x = gfx_w - 140; gfx_y = 8;
+    head_mode == 0 ? gfx_drawstr("Head 1");
+    head_mode == 1 ? gfx_drawstr("Head 2");
+    head_mode == 2 ? gfx_drawstr("Head 3");
+    head_mode == 3 ? gfx_drawstr("Heads 1+2");
+    head_mode == 4 ? gfx_drawstr("Heads 1+3");
+    head_mode == 5 ? gfx_drawstr("Heads 2+3");
+    head_mode == 6 ? gfx_drawstr("All Heads");
+    gfx_drawstr("  ");
+    gfx_drawnumber(delay_ms, 0);
+    gfx_drawstr("ms");
+  ) : (
+    gfx_r = 0.3; gfx_g = 0.3; gfx_b = 0.2;
+    gfx_x = gfx_w - 100; gfx_y = 8;
+    gfx_drawstr("DELAY: Off");
+  );
+
+  // --- Tape reels (only when delay is on) ---
+  delay_on ? (
+    reel_angle += 0.02 + intensity * 0.03;
+    reel_angle >= 2 * $pi ? reel_angle -= 2 * $pi;
+
+    reel_cx1 = gfx_w * 0.3;
+    reel_cx2 = gfx_w * 0.7;
+    reel_cy = gfx_h * 0.52;
+    reel_r = min(gfx_w * 0.1, gfx_h * 0.18);
+
+    // Left reel
+    gfx_r = 0.25; gfx_g = 0.3; gfx_b = 0.2;
+    gfx_circle(reel_cx1, reel_cy, reel_r, 1);
+    gfx_r = 0.1; gfx_g = 0.13; gfx_b = 0.08;
+    gfx_circle(reel_cx1, reel_cy, reel_r * 0.4, 1);
+    gfx_r = 0.35; gfx_g = 0.4; gfx_b = 0.3;
+    i = 0;
+    loop(3,
+      a = reel_angle + i * 2 * $pi / 3;
+      gfx_line(reel_cx1, reel_cy,
+               reel_cx1 + cos(a) * reel_r * 0.85,
+               reel_cy + sin(a) * reel_r * 0.85);
+      i += 1;
+    );
+
+    // Right reel
+    gfx_r = 0.25; gfx_g = 0.3; gfx_b = 0.2;
+    gfx_circle(reel_cx2, reel_cy, reel_r, 1);
+    gfx_r = 0.1; gfx_g = 0.13; gfx_b = 0.08;
+    gfx_circle(reel_cx2, reel_cy, reel_r * 0.4, 1);
+    gfx_r = 0.35; gfx_g = 0.4; gfx_b = 0.3;
+    i = 0;
+    loop(3,
+      a = -reel_angle + i * 2 * $pi / 3;
+      gfx_line(reel_cx2, reel_cy,
+               reel_cx2 + cos(a) * reel_r * 0.85,
+               reel_cy + sin(a) * reel_r * 0.85);
+      i += 1;
+    );
+
+    // Tape path between reels
+    gfx_r = 0.4; gfx_g = 0.35; gfx_b = 0.25;
+    tape_y = reel_cy - reel_r - 5;
+    gfx_line(reel_cx1, tape_y, reel_cx2, tape_y);
+
+    // Head indicators
+    head_y = tape_y - 12;
+    head_spacing = (reel_cx2 - reel_cx1) / 4;
+
+    h1_on ? ( gfx_r = 0.2; gfx_g = 0.9; gfx_b = 0.3; )
+          : ( gfx_r = 0.2; gfx_g = 0.25; gfx_b = 0.15; );
+    hx = reel_cx1 + head_spacing;
+    gfx_rect(hx - 4, head_y - 6, 8, 12);
+    gfx_r = 0.5; gfx_g = 0.6; gfx_b = 0.4;
+    gfx_x = hx - 2; gfx_y = head_y - 20;
+    gfx_drawstr("1");
+
+    h2_on ? ( gfx_r = 0.2; gfx_g = 0.9; gfx_b = 0.3; )
+          : ( gfx_r = 0.2; gfx_g = 0.25; gfx_b = 0.15; );
+    hx = reel_cx1 + head_spacing * 2;
+    gfx_rect(hx - 4, head_y - 6, 8, 12);
+    gfx_r = 0.5; gfx_g = 0.6; gfx_b = 0.4;
+    gfx_x = hx - 2; gfx_y = head_y - 20;
+    gfx_drawstr("2");
+
+    h3_on ? ( gfx_r = 0.2; gfx_g = 0.9; gfx_b = 0.3; )
+          : ( gfx_r = 0.2; gfx_g = 0.25; gfx_b = 0.15; );
+    hx = reel_cx1 + head_spacing * 3;
+    gfx_rect(hx - 4, head_y - 6, 8, 12);
+    gfx_r = 0.5; gfx_g = 0.6; gfx_b = 0.4;
+    gfx_x = hx - 2; gfx_y = head_y - 20;
+    gfx_drawstr("3");
+  );
+
+  // --- Transfer curve (when sat is on) ---
+  sat_on ? (
+    tc_x = gfx_w - 95;
+    tc_y = gfx_h * 0.35;
+    tc_w = 80;
+    tc_h = 80;
+
+    // Box background
+    gfx_r = 0.15; gfx_g = 0.1; gfx_b = 0.05;
+    gfx_rect(tc_x, tc_y, tc_w, tc_h);
+
+    // Center lines
+    gfx_r = 0.25; gfx_g = 0.18; gfx_b = 0.1;
+    gfx_line(tc_x, tc_y + tc_h/2, tc_x + tc_w, tc_y + tc_h/2);
+    gfx_line(tc_x + tc_w/2, tc_y, tc_x + tc_w/2, tc_y + tc_h);
+
+    // Diagonal reference
+    gfx_r = 0.25; gfx_g = 0.2; gfx_b = 0.12;
+    gfx_line(tc_x, tc_y + tc_h, tc_x + tc_w, tc_y);
+
+    // Curve
+    gfx_r = 1.0; gfx_g = 0.6; gfx_b = 0.1;
+    i = 0;
+    loop(50,
+      in = (i / 49) * 2 - 1;
+
+      sat_mode == 0 ? out = warm_tube(in, sat_drive, sat_bias);
+      sat_mode == 1 ? out = hot_tube(in, sat_drive, sat_bias);
+      sat_mode == 2 ? out = tape_sat(in, sat_drive, sat_bias);
+      sat_mode == 3 ? out = rectifier(in, sat_drive, sat_bias);
+      sat_mode == 4 ? out = fuzz(in, sat_drive, sat_bias);
+
+      out = max(-1, min(1, out));
+
+      px = tc_x + (in + 1) * 0.5 * tc_w;
+      py = tc_y + tc_h - (out + 1) * 0.5 * tc_h;
+
+      i == 0 ? (
+        gfx_x = px; gfx_y = py;
+      ) : (
+        gfx_lineto(px, py);
+      );
+
+      i += 1;
+    );
+
+    // Drive meter (small, next to curve)
+    gfx_r = 0.3; gfx_g = 0.2; gfx_b = 0.1;
+    gfx_rect(tc_x - 12, tc_y, 8, tc_h);
+    fill_h = sat_drive * tc_h;
+    sat_drive < 0.5 ? (
+      gfx_r = 0.4; gfx_g = 0.8; gfx_b = 0.2;
+    ) : sat_drive < 0.8 ? (
+      gfx_r = 0.9; gfx_g = 0.7; gfx_b = 0.1;
+    ) : (
+      gfx_r = 1.0; gfx_g = 0.3; gfx_b = 0.1;
+    );
+    gfx_rect(tc_x - 12, tc_y + tc_h - fill_h, 8, fill_h);
+  );
+
+  // --- Bottom status bar ---
+  gfx_r = 0.3; gfx_g = 0.4; gfx_b = 0.25;
+  gfx_x = 10; gfx_y = gfx_h - 18;
+  delay_on ? (
+    gfx_drawstr("W&F: ");
+    gfx_drawnumber(slider13, 0);
+    gfx_drawstr("%  Age: ");
+    gfx_drawnumber(slider14, 0);
+    gfx_drawstr("%  Spring: ");
+    gfx_drawnumber(slider18, 0);
+    gfx_drawstr("%");
+  ) : (
+    sat_on ? (
+      gfx_drawstr("Drive: ");
+      gfx_drawnumber(slider2, 0);
+      gfx_drawstr("%  Tone: ");
+      gfx_drawnumber(slider17, 0);
+      gfx_drawstr("Hz");
+    ) : (
+      gfx_drawstr("All sections off - clean passthrough");
+    );
+  );
