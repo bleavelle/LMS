@@ -52,8 +52,7 @@ def generate_jsfx(params, output_path, profile_name=None):
 
 filename:0,{data_filename}
 
-slider1:{rms_gain:.2f}<-20,20,0.1>Input Gain (dB)
-slider2:100<0,100,1>Dry/Wet (%)
+slider1:0<-20,20,0.1>Input Gain (dB)
 slider3:1<0,1,1{{Off,On}}>Limiter
 slider4:-0.01<-6,0,0.01>Limiter Threshold (dB)
 slider5:0<-6,6,0.1>Low Tweak (dB)
@@ -93,8 +92,7 @@ slider14:100<0,100,1>42069 Mix (%)
   cur_input_r = input_buf_r0;
 
   // Initialize slider-derived values (in case @slider hasn't run yet)
-  master_gain = 10 ^ ({rms_gain:.2f} / 20);
-  dry_wet = 1.0;
+  master_gain = 1.0;
   limiter_on = 1;
   limiter_thresh = 10 ^ (-0.01 / 20);
 
@@ -207,7 +205,6 @@ slider14:100<0,100,1>42069 Mix (%)
 
 @slider
   master_gain = 10 ^ (slider1 / 20);
-  dry_wet = slider2 / 100;
   limiter_on = slider3;
   limiter_thresh = 10 ^ (slider4 / 20);
 
@@ -408,9 +405,8 @@ slider14:100<0,100,1>42069 Mix (%)
         abs(wet_r) > limiter_thresh ? wet_r = sign(wet_r) * limiter_thresh;
       );
 
-      // Dry/wet mix (dry from the just-processed input buffer)
-      output_buf_l[i] = proc_l[i] * (1 - dry_wet) + wet_l * dry_wet;
-      output_buf_r[i] = proc_r[i] * (1 - dry_wet) + wet_r * dry_wet;
+      output_buf_l[i] = wet_l;
+      output_buf_r[i] = wet_r;
 
       i += 1;
     );
