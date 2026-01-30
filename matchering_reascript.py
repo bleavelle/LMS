@@ -107,16 +107,16 @@ try:
     def do_analyze(target_file, ref_file):
         """Analyze and generate real-time JSFX plugin."""
         # Ask for a profile name
-        retval, _, profile_name, _ = RPR_GetUserInputs(
+        result = RPR_GetUserInputs(
             "Matchering Profile", 1,
             "Profile name (e.g. Rock Ref, Steely Dan):",
             "", 256
         )
 
-        if not retval:
+        if not result[0]:
             return  # User cancelled
 
-        profile_name = profile_name.strip()
+        profile_name = result[4].strip()
 
         # Determine output filenames based on profile
         if profile_name:
