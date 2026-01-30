@@ -11,6 +11,7 @@ FIR coefficients are stored in an external data file to avoid JSFX code size lim
 import sys
 import os
 import json
+import numpy as np
 
 
 def generate_jsfx(params, output_path, profile_name=None):
@@ -18,6 +19,28 @@ def generate_jsfx(params, output_path, profile_name=None):
     side_fir = params["side_fir"]
     fir_len = params["fir_length"]
     rms_gain = params["rms_gain_db"]
+
+    # Normalize FIR so peak spectral gain = 0dB
+    # This preserves the EQ shape but removes the level boost
+    mid_arr = np.array(mid_fir)
+    side_arr = np.array(side_fir)
+
+    mid_spectrum = np.abs(np.fft.rfft(mid_arr))
+    side_spectrum = np.abs(np.fft.rfft(side_arr))
+
+    mid_peak = np.max(mid_spectrum)
+    side_peak = np.max(side_spectrum)
+    peak = max(mid_peak, side_peak, 1e-10)
+
+    print(f"FIR peak spectral gain before normalization: {20*np.log10(peak):.1f} dB")
+
+    mid_arr /= peak
+    side_arr /= peak
+
+    mid_fir = mid_arr.tolist()
+    side_fir = side_arr.tolist()
+
+    print(f"FIR normalized to 0dB peak spectral gain")
 
     # FFT size must be >= chunk_size + fir_length - 1
     fft_size = 8192
@@ -65,6 +88,7 @@ slider11:4<0,3,1{{4:1,8:1,12:1,20:1}}>42069 Ratio
 slider12:0.2<0.02,0.8,0.01>42069 Attack (ms)
 slider13:250<50,1100,10>42069 Release (ms)
 slider14:100<0,100,1>42069 Mix (%)
+slider15:0<0,24,0.1>42069 Makeup (dB)
 
 @init
   fir_len = {fir_len};
@@ -95,6 +119,7 @@ slider14:100<0,100,1>42069 Mix (%)
   master_gain = 1.0;
   limiter_on = 1;
   limiter_thresh = 10 ^ (-0.01 / 20);
+  comp_mix = 1;
 
   // 42069 compressor state
   comp_env = 0;  // envelope follower state (dB)
@@ -230,6 +255,7 @@ slider14:100<0,100,1>42069 Mix (%)
   comp_att = exp(-1 / (slider12 * 0.001 * srate));
   comp_rel = exp(-1 / (slider13 * 0.001 * srate));
   comp_mix = slider14 / 100;
+  comp_makeup = 10 ^ (slider15 / 20);
 
 @sample
   // Store input samples into current input buffer
@@ -397,6 +423,9 @@ slider14:100<0,100,1>42069 Mix (%)
           wet_l *= gr;
           wet_r *= gr;
         );
+        // Makeup gain
+        wet_l *= comp_makeup;
+        wet_r *= comp_makeup;
       );
 
       // Limiter

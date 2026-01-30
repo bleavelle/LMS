@@ -165,10 +165,9 @@ try:
                 f"FIR convolution - exact matchering EQ curve.\n"
                 f"Latency: ~93ms (auto-compensated by REAPER PDC)\n\n"
                 f"Sliders:\n"
-                f"- Input Gain: RMS loudness match\n"
+                f"- Input Gain: level trim\n"
                 f"- Low/Mid/High Tweak: post-EQ seasoning\n"
                 f"- 42069 Compressor: FET compression\n"
-                f"- Dry/Wet: blend with original\n"
                 f"- Limiter: brickwall protection"
             )
         else:
